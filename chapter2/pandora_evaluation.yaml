@@ -17,3 +17,4 @@ dependencies:
  - pip:
     - pysam==0.22.1
     - pyfastaq==3.17.0
+    - make_prg==0.5.0
