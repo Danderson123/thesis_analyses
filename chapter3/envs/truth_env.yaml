@@ -1,0 +1,13 @@
+name: truth_env
+channels:
+ - bioconda
+ - conda-forge
+ - nodefaults
+dependencies:
+ - python=3.10.14
+ - pip
+ - tqdm=4.67.0
+ - pandas
+ - pip:
+    - pysam==0.22.1
+    - pyfastaq==3.17.0

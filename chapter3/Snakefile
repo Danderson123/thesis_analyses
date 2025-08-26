@@ -1,0 +1,209 @@
+# Snakefile
+import os
+import glob
+import pandas as pd
+import pyfastaq
+import random
+import statistics
+from tqdm import tqdm
+import json
+
+# Define the input directory with FASTA files
+ASSEMBLY_DIR = "../pandora_assemblies"
+# get the samples
+SAMPLES = [os.path.basename(f).replace(".fasta", "").replace(".fna", "").replace(".fa", "") for f in glob.glob(os.path.join(ASSEMBLY_DIR, "*")) if "H131800734" not in f]#and "CFT073" not in f and "Escherichia_coli_MINF_1A" not in f]
+# Define the output directory not in f
+OUT_DIR = "assessment_results"
+PANRG = "Escherichia.coli.panidx.zip"
+# make the output directory if it does not exist
+if not os.path.exists(OUT_DIR):
+    os.mkdir(OUT_DIR)
+
+
+# Add a rule all to specify final outputs
+rule all:
+    input:
+        os.path.join(OUT_DIR, "correction_trajectories.png")
+
+rule make_truth_gff:
+    input:
+        assembly_dir="../pandora_assemblies",
+        reads_dir="../pandora_data",
+        reference_fasta=os.path.join(OUT_DIR, "panaroo_annotations")
+    output:
+        directory(os.path.join(OUT_DIR, "truth_gffs"))
+    threads: 24
+    resources:
+        mem_mb=30000
+    conda: "envs/truth_env.yaml"
+    shell:
+        "python3 software/make_truth_gffs.py --reads-dir {input.reads_dir} --assembly-dir {input.assembly_dir} --reference-fasta {input.reference_fasta} --output-dir {output}"
+
+rule get_true_read_annotations:
+    input:
+        reads_dir="../pandora_data",
+        gff_dir=os.path.join(OUT_DIR, "truth_gffs")
+    output:
+        json_file=os.path.join(OUT_DIR, "read_truth_annotations.json"),
+        concatenated_reads=os.path.join(OUT_DIR, "all_reads.fastq.gz"),
+        processing_dir=directory(os.path.join(OUT_DIR, "processing"))
+    threads: 8
+    resources:
+	    mem_mb=20000, threads=16
+    run:
+        def join_fastqs(fastq_files, output_file):
+            import subprocess
+            # Construct the Bash command
+            if output_file.endswith('.gz'):
+                # Use gzip for on-the-fly compression
+                command = ["cat"] + fastq_files + ["|", "gzip", ">", output_file]
+                bash_command = f"cat {' '.join(fastq_files)} | gzip > {output_file}"
+            else:
+                # Simple concatenation
+                bash_command = f"cat {' '.join(fastq_files)} > {output_file}"
+
+            try:
+                # Execute the Bash command
+                subprocess.run(bash_command, shell=True, check=True, executable="/bin/bash")
+                print(f"Successfully joined {len(fastq_files)} FASTQ files into {output_file}")
+            except subprocess.CalledProcessError as e:
+                print(f"Error during joining FASTQ files: {e}")
+                raise
+        import shutil
+        if os.path.exists(output[2]):
+            shutil.rmtree(output[2])
+        if not os.path.exists(output[2]):
+            os.mkdir(output[2])
+        all_read_annotations = {}
+        fastq_files = []
+        for sample_path in tqdm(glob.glob(os.path.join(input.reads_dir, "*"))):
+            sample_name = os.path.basename(sample_path)
+            fastq = os.path.join(input.reads_dir, sample_name, sample_name + ".nanopore.fastq.gz")
+            output_json = os.path.join(output[2], sample_name + ".json")
+            bam_file = os.path.join(output[2], sample_name + ".bam")
+            truth_gff = os.path.join(input.gff_dir, sample_name + ".gff")
+            command = f"python3 software/make_truth_read_annotations.py --bam-file {bam_file} --fastq-file {fastq} --gff-file {truth_gff} --output-json {output_json} --threads {resources.threads}"
+            shell(command)
+            with open(output_json) as i:
+                content = json.load(i)
+            all_read_annotations.update(content)
+            fastq_files.append(fastq)
+        with open(output.json_file, "w") as o:
+            o.write(json.dumps(all_read_annotations))
+        if not os.path.exists(output.concatenated_reads):
+            join_fastqs(fastq_files, output.concatenated_reads)
+
+rule run_amira_correction:
+    input:
+        reads="../pandora_data/{sample}",
+    output:
+        sample_output=directory(os.path.join(OUT_DIR, "amira_outputs", "{sample}"))
+    threads: 4
+    resources: mem_mb=30000
+    params:
+        panRG=PANRG,
+        species="Escherichia_coli"
+    shell:
+        "singularity run amira.v0.11.0.img amira --debug --no-trim --reads {input.reads}/*.nanopore.fastq.gz --output {output.sample_output} --species {params.species} --cores {threads} --panRG-path {params.panRG}"
+
+rule convert_pandora:
+    input:
+        expand(os.path.join(OUT_DIR, "amira_outputs", "{sample}"), sample=SAMPLES)
+    output:
+        expand(os.path.join(OUT_DIR, "pandora_outputs_no_correction", "{sample}", "{sample}.json"), sample=SAMPLES)
+    threads: 1
+    shell:
+        "python3 software/process_pandora_output.py"
+
+rule compare_truth_with_amira_no_correction:
+    input:
+        truth_annotations=rules.get_true_read_annotations.output.json_file,
+        amira_annotation=os.path.join(OUT_DIR, "pandora_outputs_no_correction", "{sample}", "{sample}.json"),
+        gene_lengths=rules.make_panaroo_fasta.output.output_lengths,
+        amira=os.path.join(OUT_DIR, "amira_outputs", "{sample}")
+    output:
+        os.path.join(OUT_DIR, "summary_stats_no_correction", "{sample}.txt")
+    threads: 1
+    resources:
+	    mem_mb=lambda wildcards, attempt: 10000 * attempt, threads=1
+    run:
+        if not os.path.exists(os.path.dirname(output[0])):
+            os.mkdir(os.path.dirname(output[0]))
+        shell(
+            f"python3 software/compare_JSON_annotations.py --truth-annotation {input.truth_annotations} --pandora-annotation {input.amira_annotation} --gene-lengths {input.gene_lengths} --output-stats {output}"
+        )
+
+
+rule compare_truth_with_amira_pre_correction:
+    input:
+        truth_annotations=rules.get_true_read_annotations.output.json_file,
+        amira_annotation=os.path.join(OUT_DIR, "amira_outputs", "{sample}"),
+        gene_lengths=rules.make_panaroo_fasta.output.output_lengths
+    output:
+        os.path.join(OUT_DIR, "summary_stats_pre_correction", "{sample}.txt")
+    threads: 1
+    resources:
+	    mem_mb=lambda wildcards, attempt: 10000 * attempt, threads=1
+    run:
+        if not os.path.exists(os.path.dirname(output[0])):
+            os.mkdir(os.path.dirname(output[0]))
+        shell(
+            f"python3 software/compare_JSON_annotations.py --truth-annotation {input.truth_annotations} --pandora-annotation {input.amira_annotation}/gene_calls_with_gene_filtering.json --gene-lengths {input.gene_lengths} --output-stats {output}"
+        )
+
+rule compare_truth_with_amira_post_correction:
+    input:
+        truth_annotations=rules.get_true_read_annotations.output.json_file,
+        amira_annotation=os.path.join(OUT_DIR, "amira_outputs", "{sample}"),
+        gene_lengths=rules.make_panaroo_fasta.output.output_lengths
+    output:
+        os.path.join(OUT_DIR, "summary_stats_post_correction", "{sample}.txt")
+    threads: 1
+    resources:
+	    mem_mb=lambda wildcards, attempt: 10000 * attempt, threads=1
+    run:
+        if not os.path.exists(os.path.dirname(output[0])):
+            os.mkdir(os.path.dirname(output[0]))
+        shell(
+            f"python3 software/compare_JSON_annotations.py --truth-annotation {input.truth_annotations} --pandora-annotation {input.amira_annotation}/corrected_gene_calls.json --gene-lengths {input.gene_lengths} --output-stats {output}"
+        )
+
+rule compare_truth_with_amira_mid_correction:
+    input:
+        truth_annotations=rules.get_true_read_annotations.output.json_file,
+        amira_annotation=os.path.join(OUT_DIR, "amira_outputs", "{sample}"),
+        gene_lengths=rules.make_panaroo_fasta.output.output_lengths
+    output:
+        os.path.join(OUT_DIR, "summary_stats_mid_correction", "{sample}.txt")
+    threads: 1
+    resources:
+	    mem_mb=lambda wildcards, attempt: 10000 * attempt, threads=1
+    run:
+        if not os.path.exists(os.path.dirname(output[0])):
+            os.mkdir(os.path.dirname(output[0]))
+        shell(
+            f"python3 software/compare_JSON_annotations.py --truth-annotation {input.truth_annotations} --pandora-annotation {input.amira_annotation}/mid_correction_gene_calls.json --gene-lengths {input.gene_lengths} --output-stats {output}"
+        )
+
+def aggregate_pre_correction(wildcards):
+    return expand(os.path.join(OUT_DIR, "summary_stats_pre_correction", "{sample}.txt"), sample=SAMPLES)
+
+def aggregate_post_correction(wildcards):
+    return expand(os.path.join(OUT_DIR, "summary_stats_post_correction", "{sample}.txt"), sample=SAMPLES)
+
+def aggregate_mid_correction(wildcards):
+    return expand(os.path.join(OUT_DIR, "summary_stats_mid_correction", "{sample}.txt"), sample=SAMPLES)
+
+def aggregate_no_correction(wildcards):
+    return expand(os.path.join(OUT_DIR, "summary_stats_no_correction", "{sample}.txt"), sample=SAMPLES)
+
+rule plot_results:
+    input:
+        aggregate_pre_correction,
+        aggregate_post_correction,
+        aggregate_mid_correction,
+        aggregate_no_correction
+    output:
+        os.path.join(OUT_DIR, "correction_trajectories.png")
+    shell:
+        "python3 software/plot_line_with_boxplot.py"
