@@ -1,0 +1,594 @@
+# Snakefile
+import os
+import glob
+import pandas as pd
+import pyfastaq
+import random
+import statistics
+from tqdm import tqdm
+import json
+
+# Define the input directory with FASTA files
+ASSEMBLY_DIR = "../pandora_assemblies"
+# get the samples
+SAMPLES = [os.path.basename(f).replace(".fasta", "").replace(".fna", "").replace(".fa", "") for f in glob.glob(os.path.join(ASSEMBLY_DIR, "*"))]
+# Define the output directory
+OUT_DIR = "pandora_assessment_with_AMR_filtered"
+# Define the clustering parameters
+identities = [0.80]
+lengths = [0]
+# Define the Pandora k-mer and window size
+kmer_sizes = [11, 15, 19, 23, 27]
+window_sizes = [5, 10, 14, 18, 22, 26]
+# make the output directory if it does not exist
+if not os.path.exists(OUT_DIR):
+    os.mkdir(OUT_DIR)
+
+def get_valid_outputs(initial_list):
+    valid_outputs = []
+    for f in initial_list:
+        w = int(f.split(".w")[1].split(".")[0])
+        k = int(f.split(".w")[0].split(".k")[1])
+        if k >= w:
+            valid_outputs.append(f)
+    return valid_outputs
+
+# Add a rule all to specify final outputs
+rule all:
+    input:
+        "result_plots_k_vs_w.pdf",
+        "result_plots_identity_vs_length.pdf",
+        expand(
+                os.path.join(OUT_DIR, "0.8_0", "summary_stats.{sample}.k15.w5.txt"),
+                sample=SAMPLES
+                )
+
+checkpoint get_assemblies:
+    input:
+        assembly_dir=ASSEMBLY_DIR
+    output:
+        directory(os.path.join(OUT_DIR, "subsampled_assemblies"))
+    run:
+        # make the output directory
+        if not os.path.exists(output[0]):
+            os.mkdir(output[0])
+        input_files=glob.glob(os.path.join(input.assembly_dir, "*"))
+        for f in input_files:
+            shell(f"cp {f} {output[0]}")
+            if ".gz" in f and not os.path.exists(f.replace(".gz", "")):
+                to_decompress = os.path.join(output[0], os.path.basename(f))
+                shell(f"gunzip {to_decompress}")
+            if ".fna" in f:
+                name = os.path.join(output[0], os.path.basename(f).replace(".gz", "").replace(".fna", ".fa"))
+                shell(f"mv {os.path.join(output[0], os.path.basename(f)).replace('.gz', '')} {name}")
+
+rule run_bakta:
+    input:
+        os.path.join(OUT_DIR, "subsampled_assemblies", "{sample}.fa")
+    output:
+        directory(os.path.join(OUT_DIR, "bakta_annotated_assemblies", '{sample}'))
+    params:
+        bakta_db="../bakta_db"
+    conda: "envs/bakta.yaml"
+    threads: 1
+    resources:
+        mem_mb=lambda wildcards, attempt: 20000 * attempt, threads=1
+    run:
+        "bakta --skip-trna --skip-tmrna --skip-rrna --skip-ncrna --skip-crispr --skip-plot --skip-sorf --skip-pseudo --skip-ncrna-region  --db {params.bakta_db} --threads {threads} --output {output} {input}"
+
+def get_samples():
+    # This function should return a list of all samples that are processed by 'run_bakta'
+    return [os.path.basename(f).replace(".fa", "") for f in glob.glob(os.path.join(checkpoint_output, "*.fa*"))]
+
+def get_bakta_files(wildcards):
+    checkpoint_output = checkpoints.get_assemblies.get(**wildcards).output[0]
+    return expand(os.path.join(OUT_DIR, "bakta_annotated_assemblies", "{sample}"), sample=[os.path.basename(f).replace(".fa", "") for f in glob.glob(os.path.join(checkpoint_output, "*.fa*"))])
+
+rule remove_short_annotations:
+    input:
+        get_bakta_files,
+        "AMR_alleles.gff"
+    output:
+        touch(os.path.join(OUT_DIR, "short_alleles_removed.done"))
+    run:
+        # list all gff files output by bakta
+        gff_files = [f for f in glob.glob(os.path.join(os.path.dirname(input[0]), "*", "*.gff*"))]
+        for g in tqdm(gff_files):
+            with open(g) as i:
+                features, sequence = i.read().split("##FASTA")
+            new_features = []
+            for l in features.split("\n"):
+                if l == "" or l == "\n":
+                    continue
+                if l.startswith("#") or "CDS" not in l:
+                    new_features.append(l)
+                else:
+                    contig, source, cat, start, end, dot1, strand, dot2, annotations = l.split("\t")
+                    if int(end) - int(start) > 249:
+                        new_features.append(f"{contig}\t{source}\t{cat}\t{start}\t{end}\t{dot1}\t{strand}\t{dot2}\t{annotations}")
+            new_sequence = []
+            for l in sequence.split("\n"):
+                if l != "" and l != " ":
+                    new_sequence.append(l)
+            with open(g, "w") as o:
+                o.write("\n".join(new_features + ["##FASTA", "\n".join(new_sequence)]))
+
+rule list_bakta_gffs:
+    input:
+        get_bakta_files,
+        rules.remove_short_annotations.output
+    output:
+        os.path.join(OUT_DIR, "panaroo_input.txt")
+    run:
+        # list all gff files output by bakta
+        gff_files = glob.glob(os.path.join(os.path.dirname(input[0]), "*", "*.gff*")) + ["AMR_alleles.gff"]
+        with open(output[0], 'w') as file_out:
+            file_out.write("\n".join(gff_files))
+
+rule run_panaroo:
+    input:
+        rules.list_bakta_gffs.output
+    output:
+        directory(os.path.join(OUT_DIR, "{identity}_{length}", "panaroo_output"))
+    params:
+        length_outlier_support_proportion=0.1,
+        i="{identity}",
+        l="{length}"
+    threads: 24
+    conda: "envs/panaroo.yaml"
+    resources:
+        mem_mb=lambda wildcards, attempt: 40000 * attempt, threads=24
+    shell:
+        """
+        mkdir -p {output} &&
+        panaroo --clean-mode sensitive -c {params.i} --len_dif_percent {params.l} \
+            --length_outlier_support_proportion {params.length_outlier_support_proportion} \
+            --refind-mode off --remove-invalid-genes --merge_paralogs \
+            -i {input} -o {output} --threads {threads}
+        """
+
+rule get_panaroo_alignments:
+    input:
+        rules.run_panaroo.output
+    output:
+        touch(os.path.join(OUT_DIR, "{identity}_{length}", "panaroo_alignments.done"))
+    threads: 24
+    conda: "envs/panaroo.yaml"
+    resources:
+	    mem_mb=lambda wildcards, attempt: 40000 * attempt, threads=24
+    shell:
+        'panaroo-msa -o {input} -a pan --aligner mafft -t {threads}'
+
+checkpoint qc_panaroo_alignments:
+    input:
+        rules.get_panaroo_alignments.output
+    output:
+        directory(os.path.join(OUT_DIR, "{identity}_{length}", "qced_unaligned_gene_sequences"))
+    threads: 1
+    resources:
+	    mem_mb=lambda wildcards, attempt: 40000, threads=1
+    run:
+        def clean_gene(gene):
+            chars_to_remove = set([".", "|", "(", ")", "-", "*", "+", "#", ":", "=", "/", ",","'"])
+            cleaned_gene = "".join(char for char in gene if char not in chars_to_remove)
+            return cleaned_gene
+
+        # Ensure the output directory exists
+        os.makedirs(output[0], exist_ok=True)
+        input_dir = os.path.join(os.path.dirname(input[0]), "panaroo_output", "aligned_gene_sequences")
+        # load the panaroo gene data csv
+        gene_data = pd.read_csv(os.path.join(os.path.dirname(input_dir), "gene_data.csv"))
+        # load the gene presence absence csv
+        gene_presence_absence = pd.read_csv(os.path.join(os.path.dirname(input_dir), "gene_presence_absence.csv"))
+        # get a list of locus IDs that correspond to transposases
+        transposase_gene_annotation_ids = set()
+        samples = list(gene_presence_absence.columns.values)[3:-1]
+        for index, row in gene_presence_absence.iterrows():
+            if isinstance(row["Annotation"], float):
+                continue
+            if "transposase" in row["Annotation"] or "Transposase" in row["Annotation"] or ("IS" in row["Annotation"] and "element" in row["Annotation"]):
+                if isinstance(row["AMR_alleles"], float):
+                    for samp in samples:
+                        if not isinstance(row[samp], float):
+                            if ";" in row[samp]:
+                                for annotation_id in row[samp].split(";"):
+                                    transposase_gene_annotation_ids.add(annotation_id.replace("_pseudo", ""))
+                            else:
+                                transposase_gene_annotation_ids.add(row[samp].replace("_pseudo", ""))
+        # collect the geneIds of the AMR alleles
+        gene_ids = {}
+        transposase_genes = set()
+        for index, row in gene_data.iterrows():
+            if row["gff_file"] == "AMR_alleles":
+                gene_ids[row["clustering_id"]] = row["scaffold_name"]
+            assert not ";" in row["annotation_id"]
+            if row["annotation_id"] in transposase_gene_annotation_ids:
+                transposase_genes.add(row["clustering_id"])
+            try:
+                if "transposase" in row["description"] or "Transposase" in row["description"] or ("IS" in row["description"] and "element" in row["description"]):
+                    transposase_genes.add(row["clustering_id"])
+            except:
+                pass
+        # List and process alignments
+        junk_alleles = []
+        alleles = {}
+        lengths = {}
+        names = {}
+        for a in tqdm(glob.glob(os.path.join(input_dir, "*"))):
+            reader = pyfastaq.sequences.file_reader(a)
+            alleles[a], lengths[a] = [], []
+
+            # Process each sequence
+            for sequence in reader:
+                original_seq = str(sequence.seq)
+                sequence.seq = str(sequence.seq).replace("-", "").upper()
+                sample_id, cluster_id = sequence.id.split(";")
+                if cluster_id in transposase_genes:
+                    continue
+                if len(sequence.seq) % 3 == 0 and "*" not in sequence.translate()[:-1]:
+                    if not "AMR_alleles" in sequence.id:
+                        if not len(sequence.seq) > 399:
+                            continue
+                    alleles[a].append(f">{sequence.id}\n{sequence.seq}")
+                    lengths[a].append(len(sequence.seq))
+                    if cluster_id in gene_ids:
+                        if not a in names:
+                            names[a] = set()
+                        names[a].add(clean_gene(gene_ids[cluster_id]))
+                else:
+                    junk_alleles.append(f">{sequence.id}\n{original_seq}")
+        amr_allele_file_mapping = {}
+        for a in tqdm(glob.glob(os.path.join(input_dir, "*"))):
+            # Filter alleles based on length criteria
+            if not lengths[a] == []:
+                median_length = statistics.median(lengths[a])
+                #length_tolerance = (0.8 * median_length, 1.2 * median_length)
+                length_tolerance = (0, 5 * median_length)
+                filtered_alleles = [allele for allele, length in zip(alleles[a], lengths[a]) if length_tolerance[0] <= length <= length_tolerance[1]]
+                if not filtered_alleles == []:
+                    if not all("refound" in allele for allele in filtered_alleles):
+                        # Write to new file if any allele is ≥250bp
+                        new_file_name = os.path.join(output[0], os.path.basename(a).replace("~~~", ".")).replace(".aln.fas", ".fasta")
+                        if a in names:
+                            amr_allele_file_mapping[new_file_name] = list(names[a])
+                        with open(new_file_name, "w") as o:
+                            if len(filtered_alleles) == 1:
+                                if not "E_coli_PLSDB_plasmids.with_seq" in filtered_alleles[0]:
+                                    allele = filtered_alleles[0].split("\n")
+                                    allele[1] = allele[1].replace("-", "")
+                                    o.write("\n".join(allele))
+                            else:
+                                o.write("\n".join(filtered_alleles))
+        test_annotations = []
+        # iterate through the gced sequences
+        for a in tqdm(glob.glob(os.path.join(output[0], "*"))):
+            gene_name = os.path.basename(a).replace(".fasta", "")
+            reader = pyfastaq.sequences.file_reader(a)
+            # check if this fasta contains AMR alleles
+            contains_AMR = False
+            if a in amr_allele_file_mapping:
+                contains_AMR = True
+            # Process each sequence
+            modified_sequences = []
+            PLSDB_alleles = []
+            for sequence in reader:
+                sample_id, cluster_id = sequence.id.split(";")
+                if contains_AMR is False:
+                    if not "E_coli_PLSDB_plasmids.with_seq" in sample_id:
+                        modified_sequences.append(f">{sample_id};{cluster_id}\n{str(sequence.seq)}")
+                    else:
+                        if len(PLSDB_alleles) < 1:
+                            modified_sequences.append(f">{sample_id};{cluster_id}\n{str(sequence.seq)}")
+                            PLSDB_alleles.append(f">{sample_id};{cluster_id}\n{str(sequence.seq)}")
+                        else:
+                            pass
+                if contains_AMR is True:
+                    if "AMR_alleles" in sample_id:
+                        modified_sequences.append(f">{sample_id};{cluster_id}\n{str(sequence.seq)}")
+            if len(modified_sequences) != 0:
+                with open(a, "w") as o:
+                    o.write("\n".join(modified_sequences))
+            else:
+                os.remove(a)
+        with open(os.path.join(os.path.dirname(input_dir), "failed_qc.fasta"), "w") as o:
+            o.write("\n".join(junk_alleles))
+        with open(os.path.join(os.path.dirname(input_dir), "test_sample_gene_annotations.fasta"), "w") as o:
+            o.write("\n".join(test_annotations))
+        import json
+        with open(os.path.join(os.path.dirname(input_dir), "AMR_allele_to_Panaroo_COG_mapping.json"), "w") as o:
+            o.write(json.dumps(amr_allele_file_mapping))
+
+rule align_qced_sequences:
+    input:
+        unaligned=os.path.join(OUT_DIR, "{identity}_{length}", "qced_unaligned_gene_sequences", "{gene}.fasta")
+    output:
+        aligned=os.path.join(OUT_DIR, "{identity}_{length}", "qced_aligned_gene_sequences", "{gene}.fasta")
+    threads: 2  # Adjust based on your system's capabilities
+    resources:
+	    mem_mb=lambda wildcards, attempt: 10000 * attempt, threads=2
+    run:
+        output_dir = os.path.dirname(output[0])
+        if not os.path.exists(output_dir):
+            os.mkdir(output_dir)
+        with open(input[0]) as i:
+            content = i.read().split(">")[1:]
+        if len(content) > 1:
+            shell("mafft --auto --thread {threads} {input[0]} > {output[0]}")
+        else:
+            shell("cp {input[0]} {output_dir}")
+
+def get_processed_files(wildcards):
+    unaligned_dir = checkpoints.qc_panaroo_alignments.get(**wildcards).output[0]
+    aligned_dir = os.path.join(OUT_DIR, f"{wildcards.identity}_{wildcards.length}", "qced_aligned_gene_sequences")
+    genes = [os.path.splitext(os.path.basename(f))[0] for f in glob.glob(os.path.join(unaligned_dir, "*.fasta"))]
+    return expand(os.path.join(aligned_dir, "{gene}.fasta"), gene=genes)
+
+rule make_prg:
+    input:
+        get_processed_files
+    output:
+        os.path.join(OUT_DIR, "{identity}_{length}", "panRG.prg.fa")
+    threads: 16
+    resources:
+        mem_mb=lambda wildcards, attempt: 40000 * attempt, threads=16
+    run:
+        input_dir = os.path.dirname(input[0])
+        prefix = output[0].replace(".prg.fa", "")
+        shell("make_prg from_msa -F -i {input_dir} --output-prefix {prefix} --threads {threads}")
+
+rule build_pandora_index:
+    input:
+        prg=rules.make_prg.output
+    output:
+        os.path.join(OUT_DIR, "{identity}_{length}", "panRG_make_prg_v0.5.0.k{kmer_size}.w{window_size}.panidx.zip")
+    threads: 16
+    resources:
+        mem_mb=lambda wildcards, attempt: 30000 * attempt, threads=16
+    params:
+        pandora="software/pandora-linux-precompiled-v0.12.0-alpha.0",
+        kmer_size="{kmer_size}",
+        window_size="{window_size}",
+    shell:
+        "{params.pandora} index -w {params.window_size} -k {params.kmer_size} -t {threads} -o {output} {input.prg}"
+
+rule make_panaroo_fasta:
+    input:
+        panaroo_dir=os.path.join(OUT_DIR, "{identity}_{length}", "panaroo_output")
+    output:
+        output_fasta=directory(os.path.join(OUT_DIR, "{identity}_{length}", "panaroo_annotations")),
+        output_lengths=os.path.join(OUT_DIR, "{identity}_{length}", "gene_lengths.json")
+    resources:
+	    mem_mb=lambda wildcards, attempt: 10000 * attempt, threads=1
+    threads: 1
+    run:
+
+        def reverse_complement(dna):
+            complement = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A'}
+            comp = ''.join([complement[base] if base in complement else base for base in dna[::-1]])
+            return comp
+
+        def get_first_allele(fasta_file):
+            with open(fasta_file, 'r') as f:
+                alignment = f.read().split(">")[1:]
+            # Iterate through each line in the FASTA file
+            for line in alignment:
+                allele_header = line.split("\n")[0]
+                sequence = "".join(line.split("\n")[1:]).replace("-", "").upper()
+                break
+            return os.path.basename(fasta_file).replace(".fasta", "").replace(".aln.fas", ""), allele_header, sequence
+
+        def get_alleles(fasta_file):
+            with open(fasta_file, 'r') as f:
+                alignment = f.read().split(">")[1:]
+            # Iterate through each line in the FASTA file
+            annotations = {}
+            for line in alignment:
+                allele_header = line.split("\n")[0]
+                sequence = "".join(line.split("\n")[1:]).replace("-", "").upper()
+                annotations[allele_header] = sequence
+            return os.path.basename(fasta_file).replace(".fasta", "").replace(".aln.fas", "").replace("~~~", "."), annotations
+
+        # list the MSAs
+        msas = glob.glob(os.path.join(input[0], "aligned_gene_sequences", "*.fasta")) + glob.glob(os.path.join(input[0], "aligned_gene_sequences", "*.aln.fas"))
+        random.shuffle(msas)
+        # initialise the fake gff
+        fasta_content = []
+        current_base = 1
+        gene_lengths = {}
+        # make the output directory
+        if not os.path.exists(output[0]):
+            os.mkdir(output[0])
+        # iterate through the MSAs
+        sample_data = {}
+        for f in tqdm(range(len(msas))):
+            # get the header and sequence of the first MSA
+            header, annotations = get_alleles(msas[f])
+            # iterate through the annotations
+            for a in annotations:
+                sample = a.split(";")[0].replace("_R_", "")
+                if sample not in sample_data:
+                    sample_data[sample] = []
+                sample_data[sample].append(f">{header}\n{annotations[a]}")
+                # store the gene lengths
+                gene_lengths[header] = len(annotations[a])
+        for s in sample_data:
+            with open(os.path.join(output[0], f"{s}.fasta"), "w") as o:
+                o.write("\n".join(sample_data[s]))
+        # write an output file for the gene lengths
+        with open(output[1], "w") as o:
+            o.write(json.dumps(gene_lengths))
+
+rule make_truth_gff:
+    input:
+        assembly_dir="../pandora_assemblies",
+        reads_dir="../pandora_data/samples",
+        reference_fasta=os.path.join(OUT_DIR, "{identity}_{length}", "panaroo_annotations")
+    output:
+        directory(os.path.join(OUT_DIR, "{identity}_{length}", "truth_gffs"))
+    threads: 24
+    resources:
+        mem_mb=30000
+    run:
+        for sample_path in glob.glob(os.path.join(input.reads_dir, "*")):
+            sample_name = os.path.basename(sample_path)
+            fastq = os.path.join(input.reads_dir, sample_name, sample_name + ".nanopore.fastq.gz")
+            assembly = os.path.join(input.assembly_dir, sample_name + ".fa")
+            out_gff = os.path.join(output[0], sample_name + ".gff")
+            reference_fasta = os.path.join(input.reference_fasta, f"{sample_name}.fasta")
+            command = f"python3 software/make_truth_with_minimap.py {assembly} {reference_fasta} {out_gff}"
+            if not os.path.exists(output[0]):
+                os.mkdir(output[0])
+            shell(command)
+
+rule get_true_read_annotations:
+    input:
+        reads_dir="../pandora_data/samples",
+        gff_dir=os.path.join(OUT_DIR, "{identity}_{length}", "truth_gffs")
+    output:
+        json_file=os.path.join(OUT_DIR, "{identity}_{length}", "read_truth_annotations.json")
+        #concatenated_reads=os.path.join(OUT_DIR, "{identity}_{length}", "all_reads.fastq.gz")
+    threads: 24
+    resources:
+	    mem_mb=20000, threads=24
+    run:
+        def join_fastqs(fastq_files, output_file):
+            import subprocess
+            # Construct the Bash command
+            if output_file.endswith('.gz'):
+                # Use gzip for on-the-fly compression
+                command = ["cat"] + fastq_files + ["|", "gzip", ">", output_file]
+                bash_command = f"cat {' '.join(fastq_files)} | gzip > {output_file}"
+            else:
+                # Simple concatenation
+                bash_command = f"cat {' '.join(fastq_files)} > {output_file}"
+
+            try:
+                # Execute the Bash command
+                subprocess.run(bash_command, shell=True, check=True, executable="/bin/bash")
+                print(f"Successfully joined {len(fastq_files)} FASTQ files into {output_file}")
+            except subprocess.CalledProcessError as e:
+                print(f"Error during joining FASTQ files: {e}")
+                raise
+        import shutil
+        if os.path.exists(os.path.join(os.path.dirname(output[0]), "processing")):
+            shutil.rmtree(os.path.join(os.path.dirname(output[0]), "processing"))
+        if not os.path.exists(os.path.join(os.path.dirname(output[0]), "processing")):
+            os.mkdir(os.path.join(os.path.dirname(output[0]), "processing"))
+        all_read_annotations = {}
+        fastq_files = []
+        for sample_path in tqdm(glob.glob(os.path.join(input.reads_dir, "*"))):
+            sample_name = os.path.basename(sample_path)
+            fastq = os.path.join(input.reads_dir, sample_name, sample_name + ".nanopore.fastq.gz")
+            output_json = os.path.join(os.path.dirname(output[0]), "processing", sample_name + ".json")
+            bam_file = os.path.join(os.path.dirname(output[0]), "processing", sample_name + ".bam")
+            truth_gff = os.path.join(input.gff_dir, sample_name + ".gff")
+            command = f"python3 software/make_truth_read_annotations.py --bam-file {bam_file} --fastq-file {fastq} --gff-file {truth_gff} --output-json {output_json} --threads {resources.threads}"
+            shell(command)
+            with open(output_json) as i:
+                content = json.load(i)
+            for r in content:
+                assert r not in all_read_annotations
+                all_read_annotations[r] = content[r][:]
+            fastq_files.append(fastq)
+        with open(output.json_file, "w") as o:
+            o.write(json.dumps(all_read_annotations))
+        #if not os.path.exists(output.concatenated_reads):
+        #    join_fastqs(fastq_files, output.concatenated_reads)
+
+rule run_pandora:
+    input:
+        fastq_file="../pandora_data/samples/{sample}",
+        panRG=os.path.join(OUT_DIR, "{identity}_{length}", "panRG_make_prg_v0.5.0.k{kmer_size}.w{window_size}.panidx.zip")
+    output:
+        directory(os.path.join(OUT_DIR, "{identity}_{length}", "pandora_output.k{kmer_size}.w{window_size}", "{sample}"))
+    threads: 16
+    resources:
+        mem_mb=lambda wildcards, attempt: 30000 * attempt, threads=16
+    params:
+        pandora="software/pandora-linux-precompiled-v0.12.0-alpha.0",
+    shell:
+        "mkdir -p {output} && {params.pandora} map -t {threads} \
+            --min-gene-coverage-proportion 0.5 --max-covg 10000 \
+            -o {output} {input.panRG} {input.fastq_file}/*.nanopore.fastq.gz"
+
+rule get_pandora_read_annotations:
+    input:
+        pandora_dir=os.path.join(OUT_DIR, "{identity}_{length}", "pandora_output.k{kmer_size}.w{window_size}", "{sample}")
+    output:
+        json_file=os.path.join(OUT_DIR, "{identity}_{length}", "{sample}", "pandora_annotations.k{kmer_size}.w{window_size}.json")
+    threads: 1
+    resources:
+        mem_mb=lambda wildcards, attempt: 10000 * attempt
+    shell:
+        "python3 software/convert_pandora_annotations.py --pandora-dir {input.pandora_dir} --output-json {output.json_file}"
+
+rule join_pandora_read_annotations:
+    input:
+        lambda wildcards: expand(
+            os.path.join(OUT_DIR, "{identity}_{length}", "{sample}", "pandora_annotations.k{kmer_size}.w{window_size}.json"),
+            identity=wildcards.identity,
+            length=wildcards.length,
+            kmer_size=wildcards.kmer_size,
+            window_size=wildcards.window_size,
+            sample=SAMPLES  # SAMPLES is defined earlier in the Snakefile
+        )
+    output:
+        os.path.join(OUT_DIR, "{identity}_{length}", "pandora_annotations_merged.k{kmer_size}.w{window_size}.json")
+    run:
+        import json
+        all_annotations = {}
+        for jf in input:
+            with open(jf) as infile:
+                all_annotations.update(json.load(infile))
+        with open(output[0], "w") as outfile:
+            json.dump(all_annotations, outfile)
+
+rule compare_truth_and_pandora_perfect_read_annotations:
+    input:
+        truth_annotations=rules.get_true_read_annotations.output.json_file,
+        pandora_annotations=rules.join_pandora_read_annotations.output,
+        gene_lengths=rules.make_panaroo_fasta.output.output_lengths
+    output:
+        os.path.join(OUT_DIR, "{identity}_{length}", "summary_stats.k{kmer_size}.w{window_size}.txt")
+    threads: 1
+    resources:
+	    mem_mb=lambda wildcards, attempt: 10000 * attempt, threads=1
+    shell:
+        "python3 software/compare_JSON_annotations.py --truth-annotation {input.truth_annotations} --pandora-annotation {input.pandora_annotations} --gene-lengths {input.gene_lengths} --output-stats {output}"
+
+rule plot_results:
+    input:
+        get_valid_outputs(
+            expand(
+                os.path.join(OUT_DIR, "{identity}_{length}", "summary_stats.k{kmer_size}.w{window_size}.txt"),
+                identity=identities,
+                length=lengths,
+                kmer_size=kmer_sizes,
+                window_size=window_sizes
+                )
+            )
+    output:
+        "result_plots_k_vs_w.pdf",
+        "result_plots_identity_vs_length.pdf"
+    threads: 1
+    resources:
+	    mem_mb=lambda wildcards, attempt: 10000 * attempt, threads=1
+    shell:
+        "python3 software/plot_recall_and_precision.py"
+
+rule compare_truth_and_pandora_individual:
+    input:
+        truth_annotations=rules.get_true_read_annotations.output.json_file,
+        pandora_annotations=os.path.join(OUT_DIR, "{identity}_{length}", "{sample}", "pandora_annotations.k15.w5.json"),
+        gene_lengths=rules.make_panaroo_fasta.output.output_lengths
+    output:
+        os.path.join(OUT_DIR, "{identity}_{length}", "summary_stats.{sample}.k15.w5.txt")
+    threads: 1
+    resources:
+	    mem_mb=lambda wildcards, attempt: 10000 * attempt, threads=1
+    run:
+        if not os.path.exists(os.path.dirname(output[0])):
+            os.mkdir(os.path.dirname(output[0]))
+        shell(
+            f"python3 software/compare_JSON_annotations_split.py --chromosome-reads pandora_assessment_with_AMR_filtered/0.8_0/reads_longest_contig.txt --plasmid-reads pandora_assessment_with_AMR_filtered/0.8_0/reads_other_contigs.txt --truth-annotation {input.truth_annotations} --pandora-annotation {input.pandora_annotations} --gene-lengths {input.gene_lengths} --output-stats {output}"
+        )
