@@ -1,0 +1,20 @@
+name: truth_env
+channels:
+ - bioconda
+ - conda-forge
+ - nodefaults
+dependencies:
+ - python=3.10.14
+ - pip
+ - snakemake=7.32.4
+ - tqdm=4.67.0
+ - ncbi-amrfinderplus=3.12.8
+ - seaborn=0.13.2
+ - matplotlib=3.9.2
+ - mafft=7.526
+ - biopython=1.79
+ - rasusa=2.1.0
+ - pip:
+    - pysam==0.22.1
+    - pyfastaq==3.17.0
+    - resfinder==4.6.0
