@@ -38,3 +38,13 @@ The final plot (of just the first replicate for each DNA extraction kit) can be 
 ```{bash}
 python3 scripts/plot_recall_and_precision.py
 ```
+
+Assuming that a large number of long-read FASTQs are available in a subdirectory called `Escherichia_coli/nanopore_reads`, the linear regression of read length SD against mean length can be run with:
+```{bash}
+python3 scripts/estimate_badread_params.py && python3 scripts/plot_mean_against_sd_read_lengths.py
+```
+
+After running all of the simulations, the simulated read lengths can be plotted with:
+```{bash}
+python3 scripts/plot_read_length_distributions.py
+```

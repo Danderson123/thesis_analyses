@@ -664,8 +664,8 @@ def plot_copy_number_estimates(copy_number_tuples_by_depth):
         )
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig("/hps/nobackup/iqbal/dander/thesis_figures/sim_evaluation/simulation_evaluation/simulation_results/copy_numbers.png", dpi=600)
-    plt.savefig("/hps/nobackup/iqbal/dander/thesis_figures/sim_evaluation/simulation_evaluation/simulation_results/copy_numbers.pdf")
+    plt.savefig("simulation_results/copy_numbers.png", dpi=600)
+    plt.savefig("simulation_results/copy_numbers.pdf")
     plt.close()
 
 # Second Plot: Violin plot of allele accuracy
@@ -705,10 +705,10 @@ def plot_allele_accuracy_violins(allele_df):
     ax.set_xlabel("Read depth (x)")
     ax.set_ylabel("Allele accuracy")
     plt.tight_layout()
-    plt.savefig("/hps/nobackup/iqbal/dander/thesis_figures/sim_evaluation/simulation_evaluation/simulation_results/allele_accuracies.png", dpi=600)
-    plt.savefig("/hps/nobackup/iqbal/dander/thesis_figures/sim_evaluation/simulation_evaluation/simulation_results/allele_accuracies.pdf")
+    plt.savefig("simulation_results/allele_accuracies.png", dpi=600)
+    plt.savefig("simulation_results/allele_accuracies.pdf")
 
-with open("/hps/nobackup/iqbal/dander/thesis_figures/sim_evaluation/simulation_evaluation/simulation_results/copy_number_tuples.json", "w") as o:
+with open("simulation_results/copy_number_tuples.json", "w") as o:
     o.write(json.dumps(copy_number_tuples_by_depth_by_scenario_modified))
 # Call the plotting functions
 plot_copy_number_estimates(copy_number_tuples_by_depth)
