@@ -73,7 +73,7 @@ rule run_bakta:
     threads: 1
     resources:
         mem_mb=lambda wildcards, attempt: 20000 * attempt, threads=1
-    run:
+    shell:
         "bakta --skip-trna --skip-tmrna --skip-rrna --skip-ncrna --skip-crispr --skip-plot --skip-sorf --skip-pseudo --skip-ncrna-region  --db {params.bakta_db} --threads {threads} --output {output} {input}"
 
 def get_samples():
@@ -421,7 +421,7 @@ rule make_panaroo_fasta:
 rule make_truth_gff:
     input:
         assembly_dir="../pandora_assemblies",
-        reads_dir="../pandora_data/samples",
+        reads_dir="../pandora_data",
         reference_fasta=os.path.join(OUT_DIR, "{identity}_{length}", "panaroo_annotations")
     output:
         directory(os.path.join(OUT_DIR, "{identity}_{length}", "truth_gffs"))
@@ -442,7 +442,7 @@ rule make_truth_gff:
 
 rule get_true_read_annotations:
     input:
-        reads_dir="../pandora_data/samples",
+        reads_dir="../pandora_data",
         gff_dir=os.path.join(OUT_DIR, "{identity}_{length}", "truth_gffs")
     output:
         json_file=os.path.join(OUT_DIR, "{identity}_{length}", "read_truth_annotations.json")
@@ -497,7 +497,7 @@ rule get_true_read_annotations:
 
 rule run_pandora:
     input:
-        fastq_file="../pandora_data/samples/{sample}",
+        fastq_file="../pandora_data/{sample}",
         panRG=os.path.join(OUT_DIR, "{identity}_{length}", "panRG_make_prg_v0.5.0.k{kmer_size}.w{window_size}.panidx.zip")
     output:
         directory(os.path.join(OUT_DIR, "{identity}_{length}", "pandora_output.k{kmer_size}.w{window_size}", "{sample}"))

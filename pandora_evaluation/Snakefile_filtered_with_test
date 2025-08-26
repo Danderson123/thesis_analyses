@@ -101,7 +101,7 @@ rule run_bakta:
     threads: 1
     resources:
         mem_mb=lambda wildcards, attempt: 20000 * attempt, threads=1
-    run:
+    shell:
         "bakta --skip-trna --skip-tmrna --skip-rrna --skip-ncrna --skip-crispr --skip-plot --skip-sorf --skip-pseudo --skip-ncrna-region  --db {params.bakta_db} --threads {threads} --output {output} {input}"
 
 def get_samples():
@@ -444,7 +444,7 @@ rule make_panaroo_fasta:
 
 rule make_truth_gff:
     input:
-        assembly_dir="/hps/nobackup/iqbal/dander/amira_panRG_pipeline/data/assemblies/Escherichia_coli_reassembled_pandora_assemblies",
+        assembly_dir="../pandora_assemblies",
         reads_dir="../amira_paper_data/truth_evaluation/nanopore_reads",
         reference_fasta=os.path.join(OUT_DIR, "{identity}_{length}", "panaroo_annotations")
     output:
@@ -526,7 +526,7 @@ rule run_pandora:
     resources:
         mem_mb=lambda wildcards, attempt: 30000 * attempt, threads=16
     params:
-        pandora="/hps/nobackup/iqbal/dander/Amira_truth_evaluation/software/pandora-linux-precompiled-v0.12.0-alpha.0"
+        pandora="software/pandora-linux-precompiled-v0.12.0-alpha.0"
     shell:
         """
         mkdir -p {output} && \
@@ -581,7 +581,7 @@ rule compare_truth_and_pandora_perfect_read_annotations:
         if not os.path.exists(os.path.dirname(output[0])):
             os.mkdir(os.path.dirname(output[0]))
         shell(
-            f"python3 software/compare_JSON_annotations_split.py --chromosome-reads /hps/nobackup/iqbal/dander/thesis_figures/pandora_systematic_evaluation/pandora_assessment_with_AMR_filtered_with_test/0.8_0/reads_longest_contig.txt --plasmid-reads /hps/nobackup/iqbal/dander/thesis_figures/pandora_systematic_evaluation/pandora_assessment_with_AMR_filtered_with_test/0.8_0/reads_other_contigs.txt --truth-annotation {input.truth_annotations} --pandora-annotation {input.pandora_annotations} --gene-lengths {input.gene_lengths} --output-stats {output}"
+            f"python3 software/compare_JSON_annotations_split.py --chromosome-reads pandora_assessment_with_AMR_filtered_with_test/0.8_0/reads_longest_contig.txt --plasmid-reads /hps/nobackup/iqbal/dander/thesis_figures/pandora_systematic_evaluation/pandora_assessment_with_AMR_filtered_with_test/0.8_0/reads_other_contigs.txt --truth-annotation {input.truth_annotations} --pandora-annotation {input.pandora_annotations} --gene-lengths {input.gene_lengths} --output-stats {output}"
         )
 
 rule plot_results:
