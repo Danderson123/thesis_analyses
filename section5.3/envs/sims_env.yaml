@@ -17,6 +17,7 @@ dependencies:
  - palettable=3.3.3
  - biopython=1.79
  - mafft=7.526
+ - minimap2=2.28
  - pip:
     - pysam==0.22.1
     - pyfastaq==3.17.0
