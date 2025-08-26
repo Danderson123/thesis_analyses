@@ -1,9 +1,7 @@
 
 # Overview
 
-The pipelines and scripts used in Section 5.4 of my thesis.
-
-A pipeline to rerun the truth evaluation in the Amira paper on 32 *E. coli* samples.
+The pipelines and scripts used in Section 5.4 of my thesis (the truth evaluation on 32 *E. coli* samples).
 
 # Data
 
@@ -28,4 +26,10 @@ The pipeline expects the sub-sampled Nanopore reads to be available in `amira_pa
 # Running the evaluation
 ```{bash}
 snakemake --cores 12 --use-conda --use-singularity --nolock --rerun-incomplete --keep-going 
+```
+
+# Summarising the benchmarks
+
+```{bash}
+python3 software/summarise_benchmarks.py
 ```
