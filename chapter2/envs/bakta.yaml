@@ -1,0 +1,10 @@
+name: bakta
+channels:
+ - bioconda
+ - conda-forge
+ - nodefaults
+dependencies:
+ - python=3.9
+ - biopython
+ - bakta=1.10.1
+ - numpy

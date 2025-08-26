@@ -1,7 +1,0 @@
-name: panaroo
-channels:
- - bioconda
- - conda-forge
-dependencies:
- - python=3.9.0
- - panaroo=1.5.1

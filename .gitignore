@@ -208,10 +208,11 @@ __marimo__/
 
 amira_paper_data/
 pandora_data/
-pandora_assemblies copy/
+pandora_assemblies_single/
 bakta_db/
-pandora_evaluation/pandora_assessment_with_AMR/
-pandora_evaluation/pandora_assessment_with_AMR_filtered/
-pandora_evaluation/pandora_assessment_with_AMR_filtered_with_test/
-pandora_evaluation/.snakemake
-pandora_evaluation/conda
+chapter2/pandora_assessment_with_AMR/
+chapter2/pandora_assessment_with_AMR_filtered/
+chapter2/pandora_assessment_with_AMR_filtered_with_test/
+chapter2/.snakemake
+chapter2/conda
+
