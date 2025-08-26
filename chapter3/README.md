@@ -27,9 +27,13 @@ python3 software/plot_correction_trajectories.py
 ```
 To recreate figure 3.5, run:
 ```{bash}
-python3 software/figure_3.5.py
+python3 software/align_AMR_reads_thesis_figure.py
 ```
 To recreate figures 3.6, 3.7 and A.1 run:
 ```{bash}
 python3 software/plot_true_context_unitig_alignments.py
+```
+To recreate figure 3.8 run:
+```{bash}
+python3 software/align_AMR_reads.py
 ```
