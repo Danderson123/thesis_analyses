@@ -46,6 +46,12 @@ TEST_ASSEMBLIES = "../amira_paper_data/truth_evaluation/reference_assemblies"
 for s in test_samples:
     test_samples[s]["assembly"] = os.path.join(TEST_ASSEMBLIES, s + ".fa")
 
+to_delete = set()
+for s in test_samples:
+    if not os.path.exists(test_samples[s]["assembly"]):
+        to_delete.add(s)
+for s in to_delete:
+    del test_samples[s]
 # Define the Pandora k-mer and window size
 kmer_sizes = [15]
 window_sizes = [5]
@@ -163,6 +169,7 @@ rule run_panaroo:
         i="{identity}",
         l="{length}"
     threads: 24
+    conda: "envs/panaroo.yaml"
     resources:
         mem_mb=lambda wildcards, attempt: 40000 * attempt, threads=24
     shell:
@@ -180,6 +187,7 @@ rule get_panaroo_alignments:
     output:
         touch(os.path.join(OUT_DIR, "{identity}_{length}", "panaroo_alignments.done"))
     threads: 24
+    conda: "envs/panaroo.yaml"
     resources:
 	    mem_mb=lambda wildcards, attempt: 40000 * attempt, threads=24
     shell:

@@ -15,11 +15,11 @@ SAMPLES = [os.path.basename(f).replace(".fasta", "").replace(".fna", "").replace
 # Define the output directory
 OUT_DIR = "pandora_assessment_with_AMR"
 # Define the clustering parameters
-identities = [0.80]#, 0.85, 0.90, 0.95]
-lengths = [0]#, 0.50, 0.90]
+identities = [0.80, 0.85, 0.90, 0.95]
+lengths = [0, 0.50, 0.90]
 # Define the Pandora k-mer and window size
-kmer_sizes = [11]#, 15, 19, 23, 27]
-window_sizes = [5]#, 10, 14, 18, 22, 26]
+kmer_sizes = [11, 15, 19, 23, 27]
+window_sizes = [5, 10, 14, 18, 22, 26]
 # make the output directory if it does not exist
 if not os.path.exists(OUT_DIR):
     os.mkdir(OUT_DIR)
