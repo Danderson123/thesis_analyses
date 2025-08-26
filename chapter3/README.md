@@ -16,28 +16,20 @@ The data used in the pandora paper must be in the directory above this one in a 
 
 ## Running
 
-To recreate figures 2.1 and 2.2, run:
+To run the pipeline:
 ```{bash}
 snakemake --cores <CORES> --use-conda --conda-frontend conda --snakefile Snakefile --nolock
 ```
 
-
-
-
-
-
-To recreate figure 2.3, run:
+To recreate figure 3.3, run:
 ```{bash}
-snakemake --cores <CORES> --use-conda --conda-frontend conda --snakefile Snakefile_filtered --nolock
+python3 software/plot_correction_trajectories.py
 ```
-
-To recreate figure 2.4, run:
+To recreate figure 3.5, run:
 ```{bash}
-snakemake --cores <CORES> --use-conda --conda-frontend conda --snakefile Snakefile_filtered_with_test --nolock
+python3 software/figure_3.5.py
 ```
-and then run:
+To recreate figures 3.6, 3.7 and A.1 run:
 ```{bash}
-python3 software/plot_combined_test_sample_results.py
+python3 software/plot_true_context_unitig_alignments.py
 ```
-
-The final panRG-construction pipeline (figure 2.5) is available for download from [here](https://github.com/Danderson123/Amira_panRG_pipeline).
