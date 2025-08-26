@@ -6,11 +6,10 @@ channels:
 dependencies:
  - python=3.10.14
  - pip
- - snakemake=7.32.4
  - tqdm=4.67.0
  - numpy=1.26.4
  - pandas=2.2.2
- - matplotlib=3.10.1
+ - matplotlib=3.9.1
  - mamba
  - ncbi-amrfinderplus=3.12.8
  - seaborn=0.13.2
