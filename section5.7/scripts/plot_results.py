@@ -245,7 +245,7 @@ if num_samples == 1:
 
 legend_handles, legend_labels = None, None
 
-color_palette = ListedColormap(['#0173b2', '#de8f05', '#029e73'])  # blue, orange, green
+color_palette = ListedColormap(['#d7191c', '#2c7bb6', '#fdae61'])
 
 for idx, sample in enumerate(all_samples):
     data = []

@@ -162,7 +162,7 @@ for i in range(len(depths)):
 plt.rcParams.update({'font.family': 'sans-serif', 'font.size': 16})
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.5, 10), sharex=True)
 
-colors = ['#0173b2', '#de8f05', '#029e73', '#d55e00']
+colors = ['#d7191c', '#2c7bb6', '#fdae61', '#abd9e9']
 # Recall plot
 l1, = ax1.plot(depths, amira_recalls, label='Amira', marker='o', linewidth=1.5, color=colors[0])
 l2, = ax1.plot(depths[:4], flye_recalls, label='Flye', marker='X', linewidth=1.5, color=colors[3])
@@ -179,16 +179,16 @@ ax1.spines['right'].set_visible(False)
 ax1.tick_params(axis='both', which='major', length=6, width=1)
 
 # Precision plot
-ax2.plot(depths, amira_precisions, label='Amira', marker='o', linewidth=1.5)
-ax2.plot(depths[:4], flye_precisions, label='Flye', marker='X', linewidth=1.5)
-ax2.plot(depths, mflye_precisions, label='metaFlye', marker='^', linewidth=1.5)
-ax2.plot(depths, mdbg_precisions, label='nanoMDBG', marker='s', linewidth=1.5)
+ax2.plot(depths, amira_precisions, label='Amira', marker='o', linewidth=1.5, color=colors[0])
+ax2.plot(depths[:4], flye_precisions, label='Flye', marker='X', linewidth=1.5, color=colors[3])
+ax2.plot(depths, mflye_precisions, label='metaFlye', marker='^', linewidth=1.5, color=colors[1])
+ax2.plot(depths, mdbg_precisions, label='nanoMDBG', marker='s', linewidth=1.5, color=colors[2])
 ax2.set_xlabel('Sequencing depth (×)')
 ax2.set_ylabel('Precision (%)')
 ax2.set_xlim([0, 145])
-ax2.set_ylim([0, 105])
+ax2.set_ylim([80, 101])
 ax2.set_xticks([0, 20, 40, 60, 80, 100, 120, 140])
-ax2.set_yticks([0, 20, 40, 60, 80, 100])
+ax2.set_yticks([80, 85, 90, 95, 100])
 ax2.spines['top'].set_visible(False)
 ax2.spines['right'].set_visible(False)
 ax2.tick_params(axis='both', which='major', length=6, width=1)
