@@ -219,7 +219,7 @@ gene_in_truth = []
 AMRFP_gene_counts = {}
 for a in tqdm(amira_outputs):
     sample = os.path.basename(os.path.dirname(a))
-    amrfinder = os.path.join("evaluation_results/AMR_finder_plus_results_updated.flye_v2.9.3_nanopore_only_assemblies", sample, "AMR_finder_plus_results.gff")
+    amrfinder = os.path.join("evaluation_results/AMR_finder_plus_results.flye_v2.9.3_nanopore_only_assemblies", sample, "AMR_finder_plus_results.gff")
     verification_file = os.path.join("evaluation_results", "amira_allele_coverages", sample, "amira_coverages.json")
     if not os.path.exists(verification_file):
         continue
